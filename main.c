@@ -14,6 +14,11 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#if defined(_WIN32)
+#include <Windows.h>
+#include <sys/stat.h>
+#endif
+
 #include "qt_flatten.h"
 
 #define temp_file_suffix ".temp"
@@ -65,6 +70,17 @@ int main(int argc, const char * argv[])
 #elif defined(__linux__)
     	extern const char *program_invocation_short_name;
     	prog_name = program_invocation_short_name;
+#elif defined(_WIN32)
+		TCHAR full_path[MAX_PATH];
+
+		if(GetModuleFileName(NULL, full_path, MAX_PATH))
+		{
+			prog_name = strrchr(full_path, '\\') + 1;
+		}
+		else
+		{
+			prog_name = "COMMAND";
+		}
 #else
 #error add a way to discover the program name on your platform here
 #endif
@@ -94,14 +110,22 @@ int main(int argc, const char * argv[])
         else
         {
             // We attempt to create a new file to check no such file already exists
-            // (because rename() will brutally overwrite any existing file)
-            int out_fd = open(output_file, O_WRONLY | O_CREAT | O_EXCL,
+            // (because rename() will brutally overwrite any existing file (except on Windows))
+#if defined(_WIN32)
+			int out_fd = _open(output_file, _O_WRONLY | _O_CREAT | _O_EXCL, _S_IREAD | _S_IWRITE);
+			if (out_fd != -1)
+			{
+				_close(out_fd);
+			}
+#else
+			int out_fd = open(output_file, O_WRONLY | O_CREAT | O_EXCL,
                               S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH); // RW owner, R group, R others
             if (out_fd != -1)
             {
                 // We created the file, we can close it now
                 close(out_fd);
             }
+#endif
             else
             {
                 fprintf(stderr, "Error: ");
@@ -123,43 +147,58 @@ int main(int argc, const char * argv[])
             // We flatten to a temporary file which we then move - this accomodates replacing the original file
             unsigned long temp_file_path_buffer_length = strlen(output_file) + strlen(temp_file_suffix) + 1;
             
-            char temp_file_path[temp_file_path_buffer_length];
+            char *temp_file_path = (char *)malloc(temp_file_path_buffer_length);
             
-            snprintf(temp_file_path, temp_file_path_buffer_length, "%s%s", output_file, temp_file_suffix);
-            
-            qtf_result result = qtf_flatten_movie(input_file, temp_file_path, allow_compressed_moov_atoms);
-            
-            if (result != qtf_result_ok)
-            {
-                fprintf(stderr, "Error: ");
-                switch (result) {
-                    case qtf_result_file_not_movie:
-                        fprintf(stderr, "The file was not recognised as a QuickTime movie");
-                        break;
-                    case qtf_result_file_read_error:
-                        fprintf(stderr, "The file could not be read");
-                        break;
-                    case qtf_result_file_too_complex:
-                        fprintf(stderr, "This type of movie file is not supported");
-                        break;
-                    case qtf_result_file_write_error:
-                        fprintf(stderr, "The file could not be written");
-                        break;
-                    case qtf_result_memory_error:
-                        fprintf(stderr, "Not enough memory was available");
-                        break;
-                    default:
-                        fprintf(stderr, "An unexpected error occurred");
-                        break;
-                }
-                fprintf(stderr, ".\n");
-                return_value = EXIT_FAILURE;
-            }
-            
-            if (return_value == EXIT_SUCCESS)
-            {
-                rename(temp_file_path, output_file);
-            }
+			if (temp_file_path == NULL)
+			{
+				fprintf(stderr, "Error: Not enough memory was available.\n");
+				return_value = EXIT_FAILURE;
+			}
+			else
+			{
+				qtf_result result = qtf_result_ok;
+				snprintf(temp_file_path, temp_file_path_buffer_length, "%s%s", output_file, temp_file_suffix);
+
+				result = qtf_flatten_movie(input_file, temp_file_path, allow_compressed_moov_atoms);
+
+				if (result != qtf_result_ok)
+				{
+					fprintf(stderr, "Error: ");
+					switch (result) {
+					case qtf_result_file_not_movie:
+						fprintf(stderr, "The file was not recognised as a QuickTime movie");
+						break;
+					case qtf_result_file_read_error:
+						fprintf(stderr, "The file could not be read");
+						break;
+					case qtf_result_file_too_complex:
+						fprintf(stderr, "This type of movie file is not supported");
+						break;
+					case qtf_result_file_write_error:
+						fprintf(stderr, "The file could not be written");
+						break;
+					case qtf_result_memory_error:
+						fprintf(stderr, "Not enough memory was available");
+						break;
+					default:
+						fprintf(stderr, "An unexpected error occurred");
+						break;
+					}
+					fprintf(stderr, ".\n");
+					return_value = EXIT_FAILURE;
+				}
+
+				if (return_value == EXIT_SUCCESS)
+				{
+#if defined(_WIN32)
+					// On Windows, rename() fails if the file already exists
+					remove(output_file);
+#endif
+					rename(temp_file_path, output_file);
+				}
+
+				free(temp_file_path);
+			}
         }
     }
 

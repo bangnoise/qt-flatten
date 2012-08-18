@@ -33,18 +33,42 @@
 #define QTF_FCC_stco (0x7374636f)
 #define QTF_FCC_co64 (0x636F3634)
 
-#ifdef __APPLE__
+#if defined(__APPLE__)
 #include <libkern/OSByteOrder.h>
 #define qtf_swap_big_to_host_int_32(x) OSSwapBigToHostInt32((x))
 #define qtf_swap_big_to_host_int_64(x) OSSwapBigToHostInt64((x))
 #define qtf_swap_host_to_big_int_32(x) OSSwapHostToBigInt32((x))
 #define qtf_swap_host_to_big_int_64(x) OSSwapHostToBigInt64((x))
-#else
+#elif defined(__linux__)
 #include <endian.h>
 #define qtf_swap_big_to_host_int_32(x) be32toh((x))
 #define qtf_swap_big_to_host_int_64(x) be64toh((x))
 #define qtf_swap_host_to_big_int_32(x) htobe32((x))
 #define qtf_swap_host_to_big_int_64(x) htobe64((x))
+#elif defined(__WIN32)
+static __inline unsigned short qtf_swap_16(unsigned short x)
+{
+  return (x >> 8) | (x << 8);
+}
+
+static __inline unsigned int qtf_swap_32(unsigned int x)
+{
+  return (qtf_swap_16(x & 0xffff) << 16) | (qtf_swap_16(x >> 16));
+}
+
+static __inline unsigned long long qtf_swap_64 (unsigned long long x)
+{
+  return (((unsigned long long) qtf_swap_32(x & 0xffffffffull)) << 32) | (qtf_swap_32 (x >> 32));
+}
+
+#define qtf_swap_big_to_host_int_32(x) qtf_swap_32((x))
+#define qtf_swap_big_to_host_int_64(x) qtf_swap_64((x))
+#define qtf_swap_host_to_big_int_32(x) qtf_swap_32((x))
+#define qtf_swap_host_to_big_int_64(x) qtf_swap_64((x))
+#endif
+
+#ifndef MIN
+#define MIN(x,y) (((x) < (y)) ? (x) : (y))
 #endif
 
 #define QTF_COPY_BUFFER_SIZE (10240)
@@ -383,7 +407,11 @@ static qtf_result qtf_offsets_modify(void *moov_atom, size_t moov_atom_size, ssi
 qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool allow_compressed_moov_atom)
 {
     // open source
+#if defined(_WIN32)
+    int fd_source = _open(src_path, _O_RDONLY | _O_BINARY);
+#else
     int fd_source = open(src_path, O_RDONLY);
+#endif
     if (fd_source == -1)
     {
         return qtf_result_file_read_error;
@@ -708,9 +736,13 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
     
     if (result == qtf_result_ok)
     {
+#if defined(_WIN32)
+        fd_dest = _open(dst_path, _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _S_IREAD | _S_IWRITE);
+#else
         fd_dest = open(dst_path, O_WRONLY | O_CREAT | O_EXCL,
                        S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH); // RW owner, R group, R others
-        
+#endif
+
         if (fd_dest == -1)
         {
             result = qtf_result_file_write_error;
@@ -813,9 +845,12 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
 qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compressed_moov_atom)
 {
     qtf_result result = qtf_result_ok;
-    
+#if defined(_WIN32)
+    int fd = _open(src_path, _O_RDWR | _O_BINARY);
+#else
     int fd = open(src_path, O_RDWR);
-    
+#endif
+
     if (fd == -1)
     {
         return qtf_result_file_read_error;
