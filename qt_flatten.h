@@ -34,6 +34,10 @@
 
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum qtf_result {
     qtf_result_ok = 0,
     qtf_result_file_no_free_space = 1, // there is not enough free space in the file
@@ -69,5 +73,9 @@ qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compresse
  Returns syc_result_ok on success, or an error.
  */
 qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool allow_compressed_moov_atom);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
