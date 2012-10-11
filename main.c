@@ -37,10 +37,10 @@
 #include <string.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 #if defined(_WIN32)
 #include <Windows.h>
-#include <sys/stat.h>
 #endif
 
 #include "qt_flatten.h"

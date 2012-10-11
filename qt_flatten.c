@@ -64,11 +64,22 @@
 #define qtf_swap_host_to_big_int_32(x) OSSwapHostToBigInt32((x))
 #define qtf_swap_host_to_big_int_64(x) OSSwapHostToBigInt64((x))
 #elif defined(__linux__)
-#include <endian.h>
-#define qtf_swap_big_to_host_int_32(x) be32toh((x))
-#define qtf_swap_big_to_host_int_64(x) be64toh((x))
-#define qtf_swap_host_to_big_int_32(x) htobe32((x))
-#define qtf_swap_host_to_big_int_64(x) htobe64((x))
+# include <endian.h>
+# if !defined(__BYTE_ORDER) || !defined(__LITTLE_ENDIAN)
+#  error No byte-order macros available in endian.h
+# endif
+# if __BYTE_ORDER == __LITTLE_ENDIAN
+#  include <byteswap.h>
+#  define qtf_swap_big_to_host_int_32(x) bswap_32((x))
+#  define qtf_swap_big_to_host_int_64(x) bswap_64((x))
+#  define qtf_swap_host_to_big_int_32(x) bswap_32((x))
+#  define qtf_swap_host_to_big_int_64(x) bswap_64((x))
+# else
+#  define qtf_swap_big_to_host_int_32(x) (x)
+#  define qtf_swap_big_to_host_int_64(x) (x)
+#  define qtf_swap_host_to_big_int_32(x) (x)
+#  define qtf_swap_host_to_big_int_64(x) (x)
+# endif
 #elif defined(__WIN32)
 static __inline unsigned short qtf_swap_16(unsigned short x)
 {
