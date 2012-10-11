@@ -20,4 +20,4 @@ Build
 
 or for GCC
 
-    cc -o qt-flatten -std=gnu99 -lz main.c qt_flatten.c
+    cc -o qt-flatten -std=gnu99 main.c qt_flatten.c -lz
