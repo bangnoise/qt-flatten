@@ -220,6 +220,10 @@ int main(int argc, const char * argv[])
 #endif
 					rename(temp_file_path, output_file);
 				}
+                else
+                {
+                    remove(output_file);
+                }
 
 				free(temp_file_path);
 			}
