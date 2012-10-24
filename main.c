@@ -190,7 +190,7 @@ int main(int argc, const char * argv[])
 					fprintf(stderr, "Error: ");
 					switch (result) {
 					case qtf_result_file_not_movie:
-						fprintf(stderr, "The file was not recognised as a QuickTime movie");
+						fprintf(stderr, "The file was not recognised as a valid movie");
 						break;
 					case qtf_result_file_read_error:
 						fprintf(stderr, "The file could not be read");
@@ -222,7 +222,8 @@ int main(int argc, const char * argv[])
 				}
                 else
                 {
-                    remove(output_file);
+                    remove(temp_file_path);
+                    if (output_file != input_file) remove(output_file);
                 }
 
 				free(temp_file_path);
