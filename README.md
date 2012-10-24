@@ -1,7 +1,7 @@
 qt-flatten
 ==========
 
-Code to flatten QuickTime movie files with a command-line tool by way of example.
+Code to flatten QuickTime and MPEG-4 movie files with a command-line tool by way of example.
 
 qt-flatten is functionally very similar to [qt-faststart](http://multimedia.cx/eggs/improving-qt-faststart/) but adds a few features such as support for compressed moov atoms and the ability to strip free space. Currently the code supports MacOS X, Linux and Windows.
 

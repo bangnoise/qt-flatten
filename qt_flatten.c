@@ -46,6 +46,8 @@
 #define QTF_FCC_wide (0x77696465)
 #define QTF_FCC_mdat (0x6d646174)
 #define QTF_FCC_qt__ (0x71742020)
+#define QTF_FCC_mp41 (0x6d703431)
+#define QTF_FCC_mp42 (0x6d703432)
 #define QTF_FCC_cmov (0x636d6f76)
 #define QTF_FCC_dcom (0x64636f6d)
 #define QTF_FCC_cmvd (0x636d7664)
@@ -480,10 +482,11 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
         switch (type) {
             case QTF_FCC_ftyp:
                 // QTFF Chapter 1, The File Type Compatibility Atom
+                // ISO IEC 14496-14 Section 4, File Identification
                 // TODO: could drop 0x0 compatibility atoms (save 3 bytes from QT-built files, woo)
-                if (atom_ftyp_size != 0 || offset != 0)
+                if (atom_ftyp_size != 0)
                 {
-                    result = qtf_result_file_not_movie; // there must be only one ftyp atom, and it must be the first atom
+                    result = qtf_result_file_not_movie; // there must be only one ftyp atom
                 }
                 else
                 {
@@ -513,16 +516,18 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                     {
                         // Check for compatibility
                         int brand_count = (atom_ftyp_size - 16) / 4;
-                        bool has_qt = false;
+                        bool has_qt_or_mp4 = false;
                         for (int i = 0; i < brand_count; i++) {
                             uint32_t brand = qtf_swap_big_to_host_int_32(*(uint32_t *)(atom_ftyp + 16 + (i * 4)));
-                            if (brand == QTF_FCC_qt__)
+                            if (brand == QTF_FCC_qt__ || brand == QTF_FCC_mp41 || brand == QTF_FCC_mp42)
                             {
-                                has_qt = true;
+                                has_qt_or_mp4 = true;
                                 break;
                             }
                         }
-                        if (!has_qt) result = qtf_result_file_not_movie;
+                        if (!has_qt_or_mp4) result = qtf_result_file_not_movie;
+                        // The ftyp atom must precede the moov atom and movie data
+                        if (atom_mdat_present == true || atom_moov_size != 0) result = qtf_result_file_not_movie;
                     }
                 }
                 break;
