@@ -488,6 +488,11 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                 {
                     result = qtf_result_file_not_movie; // there must be only one ftyp atom
                 }
+                else if (offset != 0)
+                {
+                    // This is lazy but most files have their ftyp atom first
+                    result = qtf_result_file_too_complex;
+                }
                 else
                 {
                     if (bytes_read != 8 || size < 20) result = qtf_result_file_not_movie; // minimally useful size 20 bytes: atom header(8) + major brand(4) + version(4) + 1 compatible brand(4)
