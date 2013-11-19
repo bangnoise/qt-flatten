@@ -60,7 +60,7 @@ typedef enum qtf_result {
  If allow_compressed_moov_atom is true the moov atom may be compressed if doing so is necessary to fit it in
  the available free space.
  
- Returns syc_result_ok on success, syc_result_file_no_free_space if there isn't a sufficiently large free atom
+ Returns qtf_result_ok on success, qtf_result_file_no_free_space if there isn't a sufficiently large free atom
  preceding the movie data, or an error.
  */
 qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compressed_moov_atom);
@@ -70,7 +70,7 @@ qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compresse
  
  If allow_compressed_moov_atom is true the moov atom will be compressed.
  
- Returns syc_result_ok on success, or an error.
+ Returns qtf_result_ok on success, or an error.
  */
 qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool allow_compressed_moov_atom);
 
