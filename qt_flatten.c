@@ -901,23 +901,25 @@ qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compresse
         return qtf_result_file_read_error;
     }
     
-    if (fd > 0)
+    size_t file_length = 0;
+    result = qtf_get_file_size(fd, &file_length);
+    
+    if (result == qtf_result_ok)
     {
-        size_t file_length = 0;
-        result = qtf_get_file_size(fd, &file_length);
-        if (result != qtf_result_ok) return result;
-        
         off_t free_start = 0;
         off_t moov_start = 0;
+        off_t mdat_start = 0;
         size_t free_size = 0;
         size_t moov_size = 0;
+        size_t mdat_size = 0;
         off_t offset = 0;
-        while (result == qtf_result_ok && (moov_size == 0 || free_size == 0))
+        while (result == qtf_result_ok && (moov_size == 0 || free_size == 0 || mdat_size == 0))
         {
             uint32_t atom_header[4];
             uint64_t size = 0;
             uint32_t type = 0;
             size_t bytes_read;
+            size_t got = 0;
             
             result = qtf_read_atom_header(fd, atom_header, sizeof(atom_header), &type, &size, &bytes_read);
             
@@ -938,13 +940,26 @@ qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compresse
                 moov_start = offset;
                 moov_size = size;
             }
+            else if (type == QTF_FCC_mdat)
+            {
+                mdat_start = offset;
+                mdat_size = size;
+            }
             offset += size;
-            lseek(fd, size - bytes_read, SEEK_CUR);
+            got = lseek(fd, size - bytes_read, SEEK_CUR);
+            if (got == -1) result = qtf_result_file_read_error;
         }
         
-        // If there is a free atom before the moov atom
+        // Check there is an mdat atom. This doesn't guarantee this isn't a reference movie
+        if (result == qtf_result_ok && mdat_size == 0)
+        {
+            result = qtf_result_file_too_complex;
+        }
+        
+        // Check there is a free atom before the mdat atom and the movie isn't already flattened
         if (result == qtf_result_ok
-            && (free_start < moov_start)
+            && (free_start < mdat_start)
+            && (moov_start > mdat_start)
             && (free_size > 8)
             && (moov_size > 8))
         {
@@ -1030,18 +1045,19 @@ qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compresse
                         }
                     }
                 }
-                else
+                else if (result == qtf_result_ok)
                 {
                     result = qtf_result_file_no_free_space;
                 }
                 free(moov);
             } // end if (moov)
         }
-        else
+        else if (result == qtf_result_ok && moov_start > mdat_start)
         {
+            // The movie wasn't already flattened and there wasn't a suitable free atom
             result = qtf_result_file_no_free_space;
         }
-        close(fd);
     }
+    close(fd);
     return result;
 }
