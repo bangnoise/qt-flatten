@@ -111,6 +111,11 @@ static __inline unsigned long long qtf_swap_64 (unsigned long long x)
 #define QTF_COPY_BUFFER_SIZE (10240)
 
 /*
+ atoms may be larger than size_t on some systems
+ */
+typedef uint64_t qtf_atom_size;
+
+/*
  *  Compression/Decompression
  */
 
@@ -152,7 +157,7 @@ typedef struct qtf_edit_s **qtf_edit_list;
 typedef struct qtf_edit_s
 {
     off_t offset;
-    ssize_t edit;
+    off_t edit;
     struct qtf_edit_s *next;
 } qtf_edit_s;
 
@@ -181,7 +186,7 @@ static void qtf_edit_list_destroy(qtf_edit_list list)
     }
 }
 
-static void qtf_edit_list_add_edit(qtf_edit_list list, off_t offset, ssize_t edit)
+static void qtf_edit_list_add_edit(qtf_edit_list list, off_t offset, off_t edit)
 {
     if (list)
     {
@@ -196,9 +201,9 @@ static void qtf_edit_list_add_edit(qtf_edit_list list, off_t offset, ssize_t edi
     }
 }
 
-static ssize_t qtf_edit_list_get_offset_change(qtf_edit_list list, off_t offset)
+static off_t qtf_edit_list_get_offset_change(qtf_edit_list list, off_t offset)
 {
-    ssize_t change = 0;
+    off_t change = 0;
     if (list)
     {
         qtf_edit_s *edit = *list;
@@ -251,7 +256,7 @@ static qtf_result qtf_write(int fd, const void *buffer, size_t length)
 /*
  returns 0 on success or a qtf_result
  */
-static qtf_result qtf_get_file_size(int fd, size_t *out_file_size)
+static qtf_result qtf_get_file_size(int fd, off_t *out_file_size)
 {
     struct stat stat_info;
     
@@ -269,7 +274,7 @@ static qtf_result qtf_get_file_size(int fd, size_t *out_file_size)
 /*
  returns 0 on success or a qtf_result
  */
-static qtf_result qtf_read_atom_header(int fd, void *dest_buffer, size_t dest_buffer_length, uint32_t *out_type, uint64_t *out_size, size_t *out_bytes_read)
+static qtf_result qtf_read_atom_header(int fd, void *dest_buffer, size_t dest_buffer_length, uint32_t *out_type, qtf_atom_size *out_size, size_t *out_bytes_read)
 {
     *out_bytes_read = 0;
     *out_size = 0;
@@ -279,7 +284,7 @@ static qtf_result qtf_read_atom_header(int fd, void *dest_buffer, size_t dest_bu
     {
         return qtf_result_memory_error;
     }
-    uint64_t size;
+    qtf_atom_size size;
     uint32_t type;
     off_t got = read(fd, dest_buffer, 8);
     
@@ -309,7 +314,7 @@ static qtf_result qtf_read_atom_header(int fd, void *dest_buffer, size_t dest_bu
             return qtf_result_file_read_error;
         }
         
-        size_t file_size = 0;
+        off_t file_size = 0;
         qtf_result result = qtf_get_file_size(fd, &file_size);
         if (result != qtf_result_ok) return result;
         
@@ -370,7 +375,7 @@ static size_t qtf_compress_movie_atom(void *atom_buffer, size_t atom_buffer_leng
     return compressed_data_length;
 }
 
-static qtf_result qtf_offsets_apply_list(void *moov_atom, size_t moov_atom_size, qtf_edit_list edit_list)
+static qtf_result qtf_offsets_apply_list(void *moov_atom, qtf_atom_size moov_atom_size, qtf_edit_list edit_list)
 {
     qtf_result result = qtf_result_ok;
     for (int i = 8; i < moov_atom_size; ) {
@@ -428,7 +433,7 @@ static qtf_result qtf_offsets_apply_list(void *moov_atom, size_t moov_atom_size,
     return result;
 }
 
-static qtf_result qtf_offsets_modify(void *moov_atom, size_t moov_atom_size, ssize_t change)
+static qtf_result qtf_offsets_modify(void *moov_atom, qtf_atom_size moov_atom_size, ssize_t change)
 {
     // fake a qtf_edit_list with one edit at offset 0
     qtf_edit_s edit = {0, change, NULL};
@@ -458,9 +463,9 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
     int result = 0;
     // the atoms we will directly deal with
     void *atom_ftyp = NULL;
-    size_t atom_ftyp_size = 0;
+    qtf_atom_size atom_ftyp_size = 0;
     void *atom_moov = NULL;
-    size_t atom_moov_size = 0;
+    qtf_atom_size atom_moov_size = 0;
     
     bool atom_mdat_present = false;
     
@@ -472,7 +477,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
     // copy the ftyp atom if present and the moov atom, get other information we need to ignore free space in the file
     while (result == qtf_result_ok) {
         uint32_t atom_header[4];
-        uint64_t size = 0;
+        qtf_atom_size size = 0;
         uint32_t type = 0;
         size_t bytes_read;
         result = qtf_read_atom_header(fd_source, atom_header, sizeof(atom_header), &type, &size, &bytes_read);
@@ -499,8 +504,12 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                     
                     if (result == qtf_result_ok)
                     {
-                        atom_ftyp_size = size;
-                        atom_ftyp = malloc(atom_ftyp_size);
+                        // We can only work with the atom if we can load it all in memory, fail otherwise
+                        if (size <= SIZE_MAX)
+                        {
+                            atom_ftyp_size = size;
+                            atom_ftyp = malloc((size_t)atom_ftyp_size);
+                        }
                         if (atom_ftyp == NULL)
                         {
                             result = qtf_result_memory_error;
@@ -511,7 +520,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                         // copy what we already read
                         memcpy(atom_ftyp, atom_header, bytes_read);
                         // read the rest
-                        result = qtf_read(fd_source, atom_ftyp + bytes_read, atom_ftyp_size - bytes_read);
+                        result = qtf_read(fd_source, atom_ftyp + bytes_read, (size_t)atom_ftyp_size - bytes_read);
                         if (result == qtf_result_ok)
                         {
                             bytes_read += atom_ftyp_size - bytes_read;
@@ -520,9 +529,9 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                     if (result == qtf_result_ok)
                     {
                         // Check for compatibility
-                        int brand_count = (atom_ftyp_size - 16) / 4;
+                        unsigned long brand_count = ((size_t)atom_ftyp_size - 16) / 4;
                         bool has_qt_or_mp4 = false;
-                        for (int i = 0; i < brand_count; i++) {
+                        for (unsigned long i = 0; i < brand_count; i++) {
                             uint32_t brand = qtf_swap_big_to_host_int_32(*(uint32_t *)(atom_ftyp + 16 + (i * 4)));
                             if (brand == QTF_FCC_qt__ || brand == QTF_FCC_mp41 || brand == QTF_FCC_mp42)
                             {
@@ -542,15 +551,19 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                 // there should only be one of these, we discard any others
                 if (atom_moov_size == 0)
                 {
-                    atom_moov_size = size;
-                    atom_moov = malloc(atom_moov_size);
                     size_t contents_bytes_read = 0;
-                    uint64_t contents_size = 0;
+                    qtf_atom_size contents_size = 0;
                     uint32_t contents_type = 0;
-                    
+
                     uint32_t decompressed_size = 0;
                     off_t compressed_data_start = 0;
-                    
+
+                    // We can only work with the atom if we can load it all in memory, fail otherwise
+                    if (size <= SIZE_MAX)
+                    {
+                        atom_moov_size = size;
+                        atom_moov = malloc((size_t)atom_moov_size);
+                    }
                     if (atom_moov == NULL)
                     {
                         result = qtf_result_memory_error;
@@ -561,7 +574,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                         memcpy(atom_moov, atom_header, bytes_read);
                         
                         // read the first atom header inside the moov atom straight into the moov atom in memory
-                        result = qtf_read_atom_header(fd_source, atom_moov + bytes_read, atom_moov_size - bytes_read, &contents_type, &contents_size, &contents_bytes_read);
+                        result = qtf_read_atom_header(fd_source, atom_moov + bytes_read, (size_t)atom_moov_size - bytes_read, &contents_type, &contents_size, &contents_bytes_read);
                         bytes_read += contents_bytes_read;
                     }
                     if (result == qtf_result_ok)
@@ -571,7 +584,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                         if (contents_type == QTF_FCC_cmov)
                         {                            
                             // read the next atom header inside the cmov atom
-                            result = qtf_read_atom_header(fd_source, atom_moov + bytes_read, atom_moov_size - bytes_read, &contents_type, &contents_size, &contents_bytes_read);
+                            result = qtf_read_atom_header(fd_source, atom_moov + bytes_read, (size_t)atom_moov_size - bytes_read, &contents_type, &contents_size, &contents_bytes_read);
                             bytes_read += contents_bytes_read;
                             // check it's a valid dcom atom
                             if (result == qtf_result_ok && (contents_type != QTF_FCC_dcom || (contents_size - contents_bytes_read) != 4)) result = qtf_result_file_not_movie;
@@ -593,7 +606,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                             if (result == qtf_result_ok)
                             {
                                 // read the cmvd atom header
-                                result = qtf_read_atom_header(fd_source, atom_moov + bytes_read, atom_moov_size - bytes_read, &contents_type, &contents_size, &contents_bytes_read);
+                                result = qtf_read_atom_header(fd_source, atom_moov + bytes_read, (size_t)atom_moov_size - bytes_read, &contents_type, &contents_size, &contents_bytes_read);
                                 bytes_read += contents_bytes_read;
                                 // check it's a valid cmvd atom
                                 if (result == qtf_result_ok && (contents_type != QTF_FCC_cmvd || (contents_size - contents_bytes_read) < 4)) result = qtf_result_file_not_movie;
@@ -616,7 +629,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                     if (result == qtf_result_ok)
                     {
                         // read the rest of the atom
-                        result = qtf_read(fd_source, atom_moov + bytes_read, atom_moov_size - bytes_read);
+                        result = qtf_read(fd_source, atom_moov + bytes_read, (size_t)atom_moov_size - bytes_read);
                         if (result == qtf_result_ok)
                         {
                             bytes_read += atom_moov_size - bytes_read;
@@ -628,7 +641,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                         if (atom_moov_decompressed == NULL) result = qtf_result_memory_error;
                         if (result == qtf_result_ok)
                         {
-                            size_t actuallly_decompressed = qtf_decompress_data(atom_moov + compressed_data_start, atom_moov_size - compressed_data_start,
+                            size_t actuallly_decompressed = qtf_decompress_data(atom_moov + compressed_data_start, (size_t)(atom_moov_size - compressed_data_start),
                                                                                 atom_moov_decompressed, decompressed_size);
                             
                             if (actuallly_decompressed != decompressed_size) result = qtf_result_file_not_movie;
@@ -647,7 +660,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
             case QTF_FCC_free:
             case QTF_FCC_skip:
             case QTF_FCC_wide:
-                qtf_edit_list_add_edit(edit_list, offset, -(ssize_t)size);
+                qtf_edit_list_add_edit(edit_list, offset, -size);
                 break;
             case QTF_FCC_mdat:
                 atom_mdat_present = true;
@@ -655,11 +668,14 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
             default:
                 break;
         }
-        
-        offset = lseek(fd_source, size - bytes_read, SEEK_CUR);
-        if (offset == -1)
+
+        if (result == qtf_result_ok)
         {
-            result = qtf_result_file_read_error;
+            offset = lseek(fd_source, size - bytes_read, SEEK_CUR);
+            if (offset == -1)
+            {
+                result = qtf_result_file_read_error;
+            }
         }
     }
     // check we can do something with this file
@@ -671,9 +687,9 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
     if (allow_compressed_moov_atom)
     {
         void *atom_moov_compressed = NULL;
-        size_t atom_moov_compressed_size = 0;
-        size_t atom_moov_compressed_expected_size = 0;
-        size_t atom_moov_compressed_actual_size = 0;
+        qtf_atom_size atom_moov_compressed_size = 0;
+        qtf_atom_size atom_moov_compressed_expected_size = 0;
+        qtf_atom_size atom_moov_compressed_actual_size = 0;
         
         if (atom_moov_size < 20) result = qtf_result_file_not_movie;
         
@@ -682,7 +698,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
             if (result == qtf_result_ok)
             {
                 atom_moov_compressed_size = atom_moov_size;
-                atom_moov_compressed = malloc(atom_moov_compressed_size);
+                atom_moov_compressed = malloc((size_t)atom_moov_compressed_size);
                 if (atom_moov_compressed == NULL)
                 {
                     result = qtf_result_memory_error;
@@ -693,7 +709,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                 // We have to estimate a compressed size, modify the sample data offsets for that estimated size, then compress
                 // the modified atom and see if we met our target. If not, repeat the process, allowing a little more space until
                 // we succeed or arrive at the original atom size
-                size_t increments = ((atom_moov_size / 16) + (16 - 1)) & ~(16 - 1);
+                size_t increments = (((size_t)atom_moov_size / 16) + (16 - 1)) & ~(16 - 1);
                 atom_moov_compressed_expected_size = increments * 3;
                 off_t total_offset_change = atom_moov_compressed_expected_size;
                 bool can_store_atoms = false;
@@ -715,8 +731,8 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                     
                     if (result == qtf_result_ok)
                     {
-                        atom_moov_compressed_actual_size = qtf_compress_movie_atom(atom_moov, atom_moov_size,
-                                                                                   atom_moov_compressed, atom_moov_compressed_size,
+                        atom_moov_compressed_actual_size = qtf_compress_movie_atom(atom_moov, (size_t)atom_moov_size,
+                                                                                   atom_moov_compressed, (size_t)atom_moov_compressed_size,
                                                                                    false, true, false);
                     }
                     if (result == qtf_result_ok
@@ -736,7 +752,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                             atom_moov = atom_moov_compressed;
                             atom_moov_size = atom_moov_compressed_expected_size; // The total size we'll write to the file
                             atom_moov_compressed = NULL;
-                            size_t free_size = atom_moov_compressed_expected_size - atom_moov_compressed_actual_size;
+                            size_t free_size = (size_t)(atom_moov_compressed_expected_size - atom_moov_compressed_actual_size);
                             if (free_size > 0 && free_size < 8)
                             {
                                 result = qtf_result_memory_error; // this shouldn't happen but it's fatal so check
@@ -798,12 +814,12 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
         // Write the ftyp atom if there was one
         if (atom_ftyp != NULL)
         {
-            result = qtf_write(fd_dest, atom_ftyp, atom_ftyp_size);
+            result = qtf_write(fd_dest, atom_ftyp, (size_t)atom_ftyp_size);
         }
         // Write the moov atom
         if (result == qtf_result_ok)
         {
-            result = qtf_write(fd_dest, atom_moov, atom_moov_size);
+            result = qtf_write(fd_dest, atom_moov, (size_t)atom_moov_size);
         }
         if (result == qtf_result_ok)
         {
@@ -819,7 +835,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
             while (result == qtf_result_ok) {
                 
                 uint32_t type;
-                uint64_t size;
+                qtf_atom_size size;
                 size_t bytes_read;
                 result = qtf_read_atom_header(fd_source, buffer, QTF_COPY_BUFFER_SIZE, &type, &size, &bytes_read);
                                 
@@ -841,7 +857,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                 if (skip)
                 {
                     // Skip these atoms
-                    off_t offset = lseek(fd_source, size - bytes_read, SEEK_CUR);
+                    offset = lseek(fd_source, size - bytes_read, SEEK_CUR);
                     if (offset == -1)
                     {
                         result = qtf_result_file_read_error;
@@ -861,7 +877,7 @@ qtf_result qtf_flatten_movie(const char *src_path, const char *dst_path, bool al
                         
                         while (result == qtf_result_ok && size > 0)
                         {
-                            size_t to_copy = MIN(size, QTF_COPY_BUFFER_SIZE);
+                            size_t to_copy = (size_t)MIN(size, QTF_COPY_BUFFER_SIZE);
                             result = qtf_read(fd_source, buffer, to_copy);
                             bytes_read += to_copy;
                             
@@ -901,7 +917,7 @@ qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compresse
         return qtf_result_file_read_error;
     }
     
-    size_t file_length = 0;
+    off_t file_length = 0;
     result = qtf_get_file_size(fd, &file_length);
     
     if (result == qtf_result_ok)
@@ -909,9 +925,9 @@ qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compresse
         off_t free_start = 0;
         off_t moov_start = 0;
         off_t mdat_start = 0;
-        size_t free_size = 0;
-        size_t moov_size = 0;
-        size_t mdat_size = 0;
+        qtf_atom_size free_size = 0;
+        qtf_atom_size moov_size = 0;
+        qtf_atom_size mdat_size = 0;
         off_t offset = 0;
         while (result == qtf_result_ok && (moov_size == 0 || free_size == 0 || mdat_size == 0))
         {
@@ -919,7 +935,7 @@ qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compresse
             uint64_t size = 0;
             uint32_t type = 0;
             size_t bytes_read;
-            size_t got = 0;
+            off_t got = 0;
             
             result = qtf_read_atom_header(fd, atom_header, sizeof(atom_header), &type, &size, &bytes_read);
             
@@ -955,7 +971,13 @@ qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compresse
         {
             result = qtf_result_file_too_complex;
         }
-        
+
+        // Check we can copy the moov atom into memory
+        if (moov_size > SIZE_MAX)
+        {
+            result = qtf_result_memory_error;
+        }
+
         // Check there is a free atom before the mdat atom and the movie isn't already flattened
         if (result == qtf_result_ok
             && (free_start < mdat_start)
@@ -964,29 +986,29 @@ qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compresse
             && (moov_size > 8))
         {
             bool moov_was_at_end = ((moov_start + moov_size) == file_length) ? true : false;
-            void *moov = malloc(moov_size);
+            void *moov = malloc((size_t)moov_size);
             if (!moov)
             {
                 result = qtf_result_memory_error;
             }
             if (result == qtf_result_ok)
             {
-                size_t got = 0;
+                off_t got = 0;
                 got = lseek(fd, moov_start, SEEK_SET);
                 if (got == -1) result = qtf_result_file_read_error;
                 if (result == qtf_result_ok)
                 {
-                    result = qtf_read(fd, moov, moov_size);
+                    result = qtf_read(fd, moov, (size_t)moov_size);
                 }
                 if (result == qtf_result_ok && allow_compressed_moov_atom && free_size < (moov_size + 8) && (free_size != moov_size) && (free_size > 40))
                 {
-                    void *compressed = malloc(free_size);
+                    void *compressed = malloc((size_t)free_size);
                     if (compressed)
                     {
                         size_t compressed_size = qtf_compress_movie_atom(moov,
-                                                                         moov_size,
+                                                                         (size_t)moov_size,
                                                                          compressed,
-                                                                         free_size,
+                                                                         (size_t)free_size,
                                                                          true, true, true); // use the fastest method that will fit
                         if (compressed_size != 0)
                         {
@@ -1012,7 +1034,7 @@ qtf_result qtf_flatten_movie_in_place(const char *src_path, bool allow_compresse
                     }
                     if (result == qtf_result_ok)
                     {
-                        result = qtf_write(fd, moov, moov_size);
+                        result = qtf_write(fd, moov, (size_t)moov_size);
                     }
                     // add a new smaller free after the moov if necessary
                     if (result == qtf_result_ok && moov_size < free_size)
